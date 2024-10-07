@@ -1,0 +1,76 @@
+trigger: none
+
+pr:
+  paths:
+    include:
+      - infrastructure
+      - configurations
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+
+# - task: PowerShell@2
+#   name: CompileTemplate
+#   displayName: Compile & Lint Template
+#   inputs:
+#     targetType: 'inline'
+#     script: |
+#       bicep.exe build $(System.DefaultWorkingDirectory)\infrastructure\main.bicep
+- task: RunARMTTKTestsXPlat@1
+  inputs:
+    templatelocation: '$(System.DefaultWorkingDirectory)/infrastructure/main.bicep'
+    resultLocation: '$(System.DefaultWorkingDirectory)/results'
+    allTemplatesMain: false
+    azureServiceConnection: 'Azure Sponsorship'
+
+- task: AzureCLI@2
+  inputs:
+    azureSubscription: 'Azure Sponsorship'
+    scriptType: 'pscore'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az group create --name "lambda-api-infra" --location "westeurope"
+      az deployment group create --resource-group "lambda-api-infra" --template-file ./infrastructure/main.bicep --parameters ./configurations/infra-test.json
+
+- task: AzurePowerShell@5
+  displayName: 'Test Infrastructure'
+  inputs:
+    azureSubscription: 'Azure Sponsorship'
+    ScriptType: InlineScript
+    Inline: |
+     
+     Import-Module Pester -Force
+     Get-Module -Name "Pester"
+     $configuration = [PesterConfiguration]::Default
+     $configuration.TestResult.Enabled = $true
+     $configuration.TestResult.OutputPath ="$(Agent.BuildDirectory)/Test-Infra.XML"
+     $container = New-PesterContainer -Path "$(System.DefaultWorkingDirectory)/tests/*.tests.ps1" -Data @{ resourceGroup="lambda-api-infra"; prefix="lmbd-infra01" }
+     $configuration.Run.Container = $container
+     $configuration.Run.PassThru = $true
+     $result =Invoke-Pester -Configuration $configuration
+     exit $result.FailedCount 
+    azurePowerShellVersion: LatestVersion
+    pwsh: true
+- task: PublishTestResults@2
+  name: PublishTTKTests
+  displayName: Publish TTK Test Results
+  inputs:
+    testResultsFormat: 'NUnit'
+    testResultsFiles:  |
+     **/*-armttk.xml
+     $(Agent.BuildDirectory)/Test-Infra.XML
+  condition: always()
+- task: AzureCLI@2
+  name: DeleteInfra
+  displayName: Delete Test Infrastructure
+  inputs:
+    azureSubscription: 'Azure Sponsorship'
+    scriptType: 'pscore'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az group delete --name "lambda-api-infra" --yes
+  condition: always()
+
+      

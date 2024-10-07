@@ -1,0 +1,73 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- main
+
+pr: none 
+
+pool:
+  vmImage: ubuntu-latest
+
+
+stages:
+- stage: Development
+  displayName: Development Environment
+  variables:
+    resourceGroupName: 'lambda-api-dev'
+    location: 'westeurope'
+    configFileName: 'dev.json'
+  jobs:
+  - job:
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'Azure Sponsorship'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az group create --name $(resourceGroupName) --location $(location)
+          az deployment group create --resource-group $(resourceGroupName) --template-file ./infrastructure/main.bicep --parameters ./configurations/$(configFileName)
+- stage: Test
+  displayName: Test Environment
+  dependsOn: Development
+  variables:
+    resourceGroupName: 'lambda-api-test'
+    location: 'westeurope'
+    configFileName: 'test.json'
+  jobs:
+  - job:
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'Azure Sponsorship'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az group create --name $(resourceGroupName) --location $(location)
+          az deployment group create --resource-group $(resourceGroupName) --template-file ./infrastructure/main.bicep --parameters ./configurations/$(configFileName)
+
+- stage: Production
+  displayName: Production Environment
+  dependsOn: Test
+  variables:
+    resourceGroupName: 'lambda-api-prod'
+    location: 'westeurope'
+    configFileName: 'prod.json'
+  jobs:
+  - deployment:
+    environment: 'Lambda Toys Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'Azure Sponsorship'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az group create --name $(resourceGroupName) --location $(location)
+                az deployment group create --resource-group $(resourceGroupName) --template-file ./infrastructure/main.bicep --parameters ./configurations/$(configFileName)
